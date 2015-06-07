@@ -75,6 +75,33 @@ def calc_new_pe(pe):
 
     return pe
 
+def simulate_new_rev_cost_year(revenue_list, cost_list, start_stock_price):
+    if cost_list:
+        prev_cost = cost_list[-1]
+        prev_revenue = revenue_list[-1]
+        prev_earning = prev_revenue - prev_cost
+    else:
+        prev_earning = float(start_stock_price) / START_PE
+        prev_revenue = (float(start_stock_price) / START_PE) / 0.1 # Assuming 10% margin
+        prev_cost = 9.0 * start_stock_price / START_PE
+
+    if prev_earning < 0:
+        # Losses -> Cost cuts.
+        cost_change = random.normalvariate(0.4 + COST_GROWTH / 2, COST_STDDEV)
+        rev_change = random.normalvariate(0.5 + REV_GROWTH / 2, REV_STDDEV)
+    else:
+        cost_change = random.normalvariate(COST_GROWTH, COST_STDDEV)
+        rev_change = random.normalvariate(REV_GROWTH, REV_STDDEV)
+        if cost_change < 0:
+            cost_change = 0
+        if rev_change < 0:
+            rev_change = 0
+    new_cost = prev_cost * cost_change
+    new_revenue = prev_revenue * rev_change
+    new_earning = new_revenue - new_cost
+
+    return (new_earning, new_revenue, new_cost)
+
 def main():
     results = {}
     print("Calculating...")
@@ -93,29 +120,7 @@ def main():
             pe_list = case.pe_list
             stock_count_list = case.stock_count_list
             for year in range(YEARS):
-                if cost_list:
-                    prev_cost = cost_list[-1]
-                    prev_revenue = revenue_list[-1]
-                    prev_earning = prev_revenue - prev_cost
-                else:
-                    prev_earning = float(stock_price) / START_PE
-                    prev_revenue = (float(stock_price) / START_PE) / 0.1 # Assuming 10% margin
-                    prev_cost = 9.0 * stock_price / START_PE
-
-                if prev_earning < 0:
-                    # Losses -> Cost cuts.
-                    cost_change = random.normalvariate(0.4 + COST_GROWTH / 2, COST_STDDEV)
-                    rev_change = random.normalvariate(0.5 + REV_GROWTH / 2, REV_STDDEV)
-                else:
-                    cost_change = random.normalvariate(COST_GROWTH, COST_STDDEV)
-                    rev_change = random.normalvariate(REV_GROWTH, REV_STDDEV)
-                    if cost_change < 0:
-                        cost_change = 0
-                    if rev_change < 0:
-                        rev_change = 0
-                new_cost = prev_cost * cost_change
-                new_revenue = prev_revenue * rev_change
-                new_earning = new_revenue - new_cost
+                new_earning, new_revenue, new_cost = simulate_new_rev_cost_year(revenue_list, cost_list, stock_price)
                 earning_list.append(new_earning)
                 cost_list.append(new_cost)
                 revenue_list.append(new_revenue)
@@ -173,62 +178,34 @@ def report(results):
         def case_final_value(case):
             return case.final_value(year + 1)
         cases_in_order = sorted(stock_result_cases, key=case_final_value)
-        case_05 = select_by_percentile(cases_in_order, 0.05)
-        case_10 = select_by_percentile(cases_in_order, 0.1)
-        case_50 = select_by_percentile(cases_in_order, 0.5)
-        case_90 = select_by_percentile(cases_in_order, 0.9)
-        case_95 = select_by_percentile(cases_in_order, 0.95)
+        percentiles = (0.05, 0.1, 0.5, 0.9, 0.95)
+        case_list = tuple([select_by_percentile(cases_in_order, x) for x in percentiles])
+        def case_to_str(case, year):
+            return "%3d (+%2d)" % (case.price_list[year],
+                                   sum(case.dividend_list[:year + 1]),
+                                   )
+
         for year in range(YEARS):
-            print("Year %2d: %6.2f (+%1d) - %3d (+%2d) - %3d (+%2d) - %3d (+%3d) - %3d (+%3d)" % (
+            print("Year %2d: %s" % (
                     year + 1,
-                    case_05.price_list[year],
-                    sum(case_05.dividend_list[:year + 1]),
-                    case_10.price_list[year],
-                    sum(case_10.dividend_list[:year + 1]),
-                    case_50.price_list[year],
-                    sum(case_50.dividend_list[:year + 1]),
-                    case_90.price_list[year],
-                    sum(case_90.dividend_list[:year + 1]),
-                    case_95.price_list[year],
-                    sum(case_95.dividend_list[:year + 1]),
+                    " - ".join([case_to_str(x, year) for x in case_list])
                     ))
 
         def per_year(val):
             return val ** (1.0 / YEARS)
-        print("Gain/year:\t%.2f %.2f %.2f %.2f %.2f" %
-              (per_year(case_05.final_value(YEARS) / stock_price) - 0,
-               per_year(case_10.final_value(YEARS) / stock_price) - 0,
-               per_year(case_50.final_value(YEARS) / stock_price) - 0,
-               per_year(case_90.final_value(YEARS) / stock_price) - 0,
-               per_year(case_95.final_value(YEARS) / stock_price) - 0
-              ))
+        print("Gain/year:\t%s" %
+              " ".join(["%.2f" % per_year(x.final_value(YEARS) / stock_price) for x in case_list]))
 
-        print("P/E:\t%2d %2d %2d %2d %2d" %
-              (case_05.pe_list[YEARS-1],
-               case_10.pe_list[YEARS-1],
-               case_50.pe_list[YEARS-1],
-               case_90.pe_list[YEARS-1],
-               case_95.pe_list[YEARS-1],
-              ))
+        print("P/E:\t%s" %
+              " ".join(["%2d" % x.pe_list[YEARS - 1] for x in case_list]))
 
         if False:
             def earning_list_to_str(earning_list):
                 strs = ["%.2f" % x for x in earning_list]
                 return "[" + ", ".join(strs) + "]\n"
-            print("E:\t%s %s %s %s %s" %
-                  (earning_list_to_str(case_05.earning_list),
-                   earning_list_to_str(case_10.earning_list),
-                   earning_list_to_str(case_50.earning_list),
-                   earning_list_to_str(case_90.earning_list),
-                   earning_list_to_str(case_95.earning_list),
-                  ))
-
-        print("Count:\t%.2f %.2f %.2f %.2f %.2f" %
-              (case_05.stock_count_list[YEARS-1],
-               case_10.stock_count_list[YEARS-1],
-               case_50.stock_count_list[YEARS-1],
-               case_90.stock_count_list[YEARS-1],
-               case_95.stock_count_list[YEARS-1],
-              ))
+            print("E:\t%s" %
+                  " ".join([earning_list_to_str(x.earning_list) for x in case_list]))
+        print("Count:\t%s" %
+              " ".join(["%.2f" % x.stock_count_list[YEARS-1] for x in case_list]))
 if __name__ == "__main__":
     main()
